@@ -51,9 +51,9 @@ A screenshot of an example prediction:
 
 ## Next Word Prediction App - conclusions
 
-- The app can be found here: 
+- The app can be found [here](https://elisab.shinyapps.io/myCapstoneApp/)
 
-- The code can be found here:
+- The code can be found [here](https://github.com/elibattistoni/DataScienceCapstone)
 
 
 
