@@ -3,13 +3,12 @@ library(shiny)
 library(stringr)
 library(wordcloud)
 
-# Loading bigram, trigram and quadgram frequencies words matrix frequencies
+# load n-gram models (bigram, trigram, quadrigram frequency tables)
 bigram = readRDS("my_bigram.RData"); 
 trigram = readRDS("my_trigram.RData"); 
 quadrigram = readRDS("my_quadrigram.RData");
 
-## predict based on bigram frequency table
-# when only one word is the input
+# predict based on bigram frequency table (input = 1 word)
 next_word_bigram = function(sentence) {
     sent_spl = strsplit(tolower(sentence), " ")
     sent_spl = sent_spl[[1]]
@@ -24,8 +23,7 @@ next_word_bigram = function(sentence) {
   return(next_word_df)
 }
 
-## predict based on trigram frequency table
-# when input has two words
+# predict based on trigram frequency table (input = 2 words)
 next_word_trigram = function(sentence) {
     sent_spl = strsplit(tolower(sentence), " ")
     sent_spl = sent_spl[[1]]
@@ -40,8 +38,7 @@ next_word_trigram = function(sentence) {
     return(next_word_df)
 }
 
-## predict based on quadrigram frequency table
-# when input has three words
+# predict based on quadrigram frequency table (input = 3 words)
 next_word_quadrigram = function(sentence) {
     sent_spl = strsplit(tolower(sentence), " ")
     sent_spl = sent_spl[[1]]
@@ -55,6 +52,7 @@ next_word_quadrigram = function(sentence) {
     return(next_word_df)
 }
 
+# overall prediction function
 next_word_pred = function(sentence) {
     removeNumPunct = function(x){str_replace_all(x, "[^[:alpha:][:space:]]*", "")}
     sentence = removeNumPunct(sentence)
@@ -108,6 +106,7 @@ next_word_pred = function(sentence) {
 # [[4]] top 10 predicted words using same model as for [[2]]
 # [[5]] top 10 predicted words with bigrams based on last word (if number of words == 1, then [[4]] and [[5]] are equal)
 
+# for shiny
 shinyServer(function(input, output) {
     
     observeEvent(input$button, {
