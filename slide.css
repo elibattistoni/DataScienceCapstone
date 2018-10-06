@@ -1,0 +1,23 @@
+slides > slide {
+  font-family: Helvetica, sans-serif;
+  background-color: white;
+}
+
+.title-slide hgroup > h1 {
+  font-size: 50px;
+  letter-spacing: 0;
+  color: #3E197D;
+}
+
+body p {
+  color: #000000;
+}
+
+h1, h2 {
+    color: #3E197D;
+}
+
+
+
+
+

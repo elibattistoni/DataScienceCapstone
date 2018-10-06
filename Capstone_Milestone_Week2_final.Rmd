@@ -1,0 +1,333 @@
+---
+title: "Capstone - Milestone Report"
+subtitle: "Week 2"
+author: "Elisa Battistoni"
+date: "9/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      fig.width = 7, fig.height = 7, fig.align = "center") # comment = ""
+```
+
+This report contains an exploratory analysis of the [SwiftKey dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip), with an analysis of the frequency of words (unigrams) and word combinations, specifically 2-grams (bigrams) and 3-grams (trigrams). The purpose of this exploratory analysis is to pave the way for building a prediction model in which a (third) word will be predicted given one (or two) typed words.
+
+## Exploratory Data Analysis
+
+Load libraries:
+```{r, message = FALSE, warning = FALSE}
+library(stringi)
+library(stringr)
+library(tm)
+library(wordcloud)
+library(wordcloud2)
+library(ggplot2)
+library(quanteda)
+library(dplyr)
+```
+
+### Data preprocessing
+
+Load data:
+```{r}
+# set wd and file paths
+setwd("~/Desktop/Data Science/Coursera - Data Science Specialization/Course 10 - Capstone Project")
+path_twitter = paste(getwd(), "/dataset/en_US/en_US.twitter.txt", sep = "")
+path_news = paste(getwd(), "/dataset/en_US/en_US.news.txt", sep = "")
+path_blogs = paste(getwd(), "/dataset/en_US/en_US.blogs.txt", sep = "")
+# read data
+twitter = readLines(path_twitter, encoding = "UTF-8", skipNul = TRUE)
+news = readLines(path_news, encoding = "UTF-8", skipNul = TRUE)
+blogs = readLines(path_blogs, encoding = "UTF-8", skipNul = TRUE)
+```
+
+Get an overview of the raw data:
+```{r}
+data.frame("File_Name" = c("en_US.twitter.txt", "en_US.news.txt", "en_US.blogs.txt"),
+           "File_Size_MB" = sapply(list(path_twitter,path_news,path_blogs), function(x){file.size(x)/(2^20)}),
+           "Tot_NumLines" = sapply(list(twitter,news,blogs), length),
+           "Tot_NumWords" = sapply(sapply(list(twitter,news,blogs), stri_count_words), sum),
+           "MeanChars_per_Line" = sapply(list(twitter,news,blogs), function(x){mean(nchar(x))}),
+           "Chars_LongestLine" = sapply(list(twitter,news,blogs), function(x){max(nchar(x))}))
+```
+
+Given that the three files are very big in size, analyze only a subsample of this datasets to address the issue of the amount of memory used and computational speed.
+
+
+Data sampling and merging:
+```{r}
+set.seed(2018-09-10) # for reproducibility
+sample_size = 2000 # only 2000 samples from each full dataset will be used
+datasample = c(sample(blogs, sample_size), sample(news, sample_size), sample(twitter, sample_size))
+
+# remove the original data to get some workspace
+rm(blogs, twitter, news, path_twitter, path_blogs, path_news)
+
+# convert all characters to ASCII
+datasample = iconv(datasample, to = "ASCII", sub = "")
+
+# get profanity words
+bad_words = readLines("http://www.cs.cmu.edu/~biglou/resources/bad-words.txt")
+# more info on profanity words here https://www.cs.cmu.edu/~biglou/resources/
+```
+
+Create the corpus (i.e. a large and structured set of texts) and clean it (more information about "corpus" is given [here](https://www.quora.com/What-is-corpus-corpora-in-text-mining)). The `cleanToSpace` function was slightly edited from the function written [here](https://eight2late.wordpress.com/2015/05/27/a-gentle-introduction-to-text-mining-using-r/). The reason for writing this function is that sometimes there are colons and hyphens without spaces between the words; using the `removePunctuation` function of the `tm` package without fixing this will cause the words on either side of the symbol to be combined; therefore in order to do things properly, it is best to fix this issue before using the `tm` transformation.
+```{r}
+# create the corpus with the tm package
+corpus = VCorpus(VectorSource(datasample))
+
+# define a general function to transform symbols/punctuations etc. into a space
+cleanToSpace = content_transformer(function(x, pattern) {return (str_replace_all(x, pattern, " "))})
+
+# remove (i.e. replace with a space) colons and hyphens
+corpus = tm_map(corpus, cleanToSpace, "-")
+corpus = tm_map(corpus, cleanToSpace, ":")
+
+# remove also non-standard punctuation marks
+corpus = tm_map(corpus, cleanToSpace, "`")
+corpus = tm_map(corpus, cleanToSpace, "´")
+corpus = tm_map(corpus, cleanToSpace, " -")
+
+# convert to lower case
+corpus = tm_map(corpus, content_transformer(tolower))
+
+# find and replace common contractions
+cleanContractions = function(x){
+    x = str_replace_all(x, " i'm ", " i am ")
+    x = str_replace_all(x, " it's ", " it is ")
+    x = str_replace_all(x, "n't ", " not ")
+    x = str_replace_all(x, " dont ", " do not ")
+    x = str_replace_all(x, "'d ", " would ")
+    x = str_replace_all(x, "'ll ", " will ")
+    x = str_replace_all(x, "'re ", " are ")
+    x = str_replace_all(x, "'ve ", " have ")
+    return(x)
+}
+corpus = tm_map(corpus, content_transformer(cleanContractions))
+
+# remove urls
+corpus = tm_map(corpus, cleanToSpace, "(ftp|http|https|www)[^[:space:]]+")
+
+# remove email addresses
+corpus = tm_map(corpus, cleanToSpace, "[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+")
+
+# remove characters corresponding to twitter hashtags, e.g. "#tag"
+corpus = tm_map(corpus, cleanToSpace, "(#[[:alnum:]_]*)")
+
+# remove characters corresponding to twitter users, e.g. "@user"
+corpus = tm_map(corpus, cleanToSpace, "(@[[:alnum:]_]*)")
+
+# remove characters @, .@, RT @, MT @, etc.
+corpus = tm_map(corpus, cleanToSpace, "^(.*)?@")
+
+# remove anything other than English letters or space (just in case)
+removeNumPunct = function(x){str_replace_all(x, "[^[:alpha:][:space:]]*", "")}
+corpus = tm_map(corpus, content_transformer(removeNumPunct))
+
+# remove remaining punctuation with the specific tm function
+corpus = tm_map(corpus, removePunctuation)
+
+# remove numbers
+corpus = tm_map(corpus, removeNumbers)
+
+# remove english stopwords (i.e., "the", "for", "is", "of", "to", ... very common and very frequent words, which do not convey semantic meaning to a text) and bad words (but create a different corpus leaving the stopwords in, because they'll be needed for predictions)
+corpus_without_stopwords = tm_map(corpus, removeWords, c(stopwords("english"), bad_words))
+corpus_with_stopwords = tm_map(corpus, removeWords, bad_words)
+
+rm(corpus)
+
+# remove duplicate words
+remove_duplicates = Vectorize(
+    function(x){paste(unique(trimws(unlist(strsplit(x, split = " ", fixed = F, perl = T)))), 
+                      collapse = " ")}, USE.NAMES = F)
+corpus_without_stopwords = tm_map(corpus_without_stopwords, content_transformer(remove_duplicates))
+corpus_with_stopwords = tm_map(corpus_with_stopwords, content_transformer(remove_duplicates))
+
+# remove extra white spaces
+corpus_without_stopwords = tm_map(corpus_without_stopwords, stripWhitespace)
+corpus_with_stopwords = tm_map(corpus_with_stopwords, stripWhitespace)
+
+```
+
+<br>
+
+### N-grams without stopwords
+Create n-grams and plot them:
+```{r}
+corpus = corpus_without_stopwords
+
+my_corpus = quanteda::corpus(corpus)
+print("Glimpse of corpus")
+my_corpus[1]
+
+# just to give some examples on how n-grams look like
+my_tokens = quanteda::tokens(my_corpus)
+paste("Some tokens: ", paste(my_tokens[1]$text1[1:3], collapse = ", "))
+my_unigram = quanteda::tokens_ngrams(my_tokens, n = 1L, skip = 0L, concatenator = "_")
+paste("Some unigrams: ", paste(my_unigram[1]$text1[1:3], collapse = ", "))
+my_bigram = quanteda::tokens_ngrams(my_tokens, n = 2L, skip = 0L, concatenator = "_")
+paste("Some bigrams: ", paste(my_bigram[1]$text1[1:3], collapse = ", "))
+my_trigram = quanteda::tokens_ngrams(my_tokens, n = 3L, skip = 0L, concatenator = "_")
+paste("Some trigrams: ", paste(my_trigram[1]$text1[1:3], collapse = ", "))
+
+# now remove them
+rm(my_tokens, my_bigram, my_unigram, my_trigram) 
+
+# function for creating ngrams through the document feature matrix with the quanteda package
+create_ngrams = function(x_corpus, x_ngrams){
+    # create document feature matrix
+    ngram_dfm = quanteda::dfm(x_corpus, ngrams = x_ngrams, verbose = FALSE)
+    
+    # tabulate feature frequencies, sort by descending frequency order
+    features_ngram_dfm = quanteda::textstat_frequency(ngram_dfm) %>%
+        arrange(desc(frequency))
+    
+    return(features_ngram_dfm)
+}
+
+# create ngrams
+unigram_dfm = create_ngrams(my_corpus, 1)
+head(unigram_dfm) # get a glimpse of the unigram document frequency matrix
+bigram_dfm = create_ngrams(my_corpus, 2)
+head(bigram_dfm)
+trigram_dfm = create_ngrams(my_corpus, 3)
+#head(trigram_dfm)
+quadrigram_dfm = create_ngrams(my_corpus, 4)
+#head(quadrigram_dfm)
+
+# function for plotting the frequencies
+frequency_barplot = function(data, ngrams){
+    ggplot(data[1:20,], aes(x = reorder(feature, -frequency), y = frequency)) +
+        theme_minimal() +
+        ggtitle(paste("Top 20 ",ngrams,"grams", sep = "")) + 
+        xlab(paste(ngrams,"grams", sep = "")) + 
+        ylab("Frequency") +
+        theme(axis.text.x = element_text(angle = 45, size = 11, hjust = 1, color = "black"),
+              plot.title = element_text(hjust = 0.5, size = 15, face = "bold"),
+              axis.title.x = element_text(size = 12, face = "bold"),
+              axis.title.y = element_text(size = 12, face = "bold")) +
+        geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+        geom_text(aes(label = frequency) , vjust = 1.5, color = "white", 
+                  size = 3.5, fontface = "bold")
+}
+
+# plot them
+frequency_barplot(unigram_dfm, "Uni")
+frequency_barplot(bigram_dfm, "Bi")
+frequency_barplot(trigram_dfm, "Tri")
+frequency_barplot(quadrigram_dfm, "Quadri")
+
+# make some wordclouds
+# for unigrams
+wordcloud2(unigram_dfm, size = 1, color = "random-light", 
+           backgroundColor = "black", shape = "circle")
+
+# for bigrams
+wordcloud(bigram_dfm$feature, bigram_dfm$frequency, min.freq = 10, max.words = 100, 
+          scale = c(5, .1), rot.per = 0.2, colors = brewer.pal(8, "Pastel2"), 
+          random.order = FALSE)
+
+rm(corpus)
+```
+
+<br>
+
+### N-grams with stopwords
+Since for text predictions you'll want to keep stopwords in (you want to be able to make predictions on them as well), create n-grams, and plot them. The analysis without stopwords (just above) has therefore a purely exploratory purpose.
+```{r}
+corpus = corpus_with_stopwords
+
+my_corpus = quanteda::corpus(corpus)
+
+unigram_dfm = create_ngrams(my_corpus, 1)
+bigram_dfm = create_ngrams(my_corpus, 2)
+trigram_dfm = create_ngrams(my_corpus, 3)
+quadrigram_dfm = create_ngrams(my_corpus, 4)
+
+frequency_barplot(unigram_dfm, "Uni")
+frequency_barplot(bigram_dfm, "Bi")
+frequency_barplot(trigram_dfm, "Tri")
+frequency_barplot(quadrigram_dfm, "Quadri")
+
+# make some wordclouds
+# for unigrams
+wordcloud(unigram_dfm$feature, unigram_dfm$frequency, min.freq = 10, max.words = 100, 
+          scale = c(5, .1), rot.per = 0.2, colors = brewer.pal(8, "Pastel2"), 
+          random.order = FALSE)
+
+# for bigrams
+wordcloud(bigram_dfm$feature, bigram_dfm$frequency, min.freq = 10, max.words = 100, 
+          scale = c(5, .1), rot.per = 0.2, colors = brewer.pal(8, "Pastel2"), 
+          random.order = FALSE)
+
+rm(corpus)
+```
+
+
+<br>
+
+In this section I will answer the following questions:
+
+* How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+
+* How do you evaluate how many of the words come from foreign languages?
+
+* Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+
+Let's go back the the data without stopwords to answer these questions.
+```{r}
+corpus = corpus_without_stopwords
+
+my_corpus = quanteda::corpus(corpus)
+
+unigram_dfm = create_ngrams(my_corpus, 1)
+bigram_dfm = create_ngrams(my_corpus, 2)
+trigram_dfm = create_ngrams(my_corpus, 3)
+quadrigram_dfm = create_ngrams(my_corpus, 4)
+
+
+```
+
+**How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?**
+In order to calculate the amount of unique words for a certain coverage level, create a loop until an input proportion of word coverage is reached and return the amount of unique words.
+```{r}
+unique_words_per_coverage = function(ngram_dfm, coverage_proportion){
+    words_i = 0 # preallocate the number of words to 0
+    for (i in 1:length(ngram_dfm$frequency)) { # loop over the number of unique words
+        words_i = words_i + ngram_dfm$frequency[i] # accumulate frequency of unique words
+        # sum(ngram_dfm$frequency) = number of all the word instances
+        # if the frequency of unique words is bigger or equal to the coverage
+        # (given by the coverage proportion times the number of all the word instances)
+        # return the iteration number to get the number of unique words and exit the loop
+        if (words_i >= sum(ngram_dfm$frequency)*coverage_proportion) {
+            return(i)
+            break}
+    }
+}
+# number of unique words for a coverage of 90% of all the word instances
+unique_words_per_coverage(unigram_dfm, 0.9)
+# number of unique words for a coverage of 50%
+unique_words_per_coverage(unigram_dfm, 0.5)
+```
+As expected, the number of unique words increases exponentially as the coverage increases, since the frequency of unique words in the corpus drops exponentially (as it can be seen from the barplots of unigrams above).
+
+**How do you evaluate how many of the words come from foreign languages?**
+You could use (and compare the text data with) a foreign language dictionary. In this case, since we have analyzed only files related to the English language, cases of foreign language would be very few, therefore they do not influence this analysis. To remove such words, you can use the `removeWords` function within the `tm_map` function associated with a specific foreign language dictionary to remove such words in the corpus. Furthermore, since the English language has only ASCII characters (no special characters or special words), you can use this feature to detect foreign characters and words.
+
+**Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?**
+As mentioned above, as the coverage increases, the unique words increase in an almost exponential manner. Therefore, one way in which coverage might be increased, would be to reduce the number of low-frequency words, for example by using (or creating) a specific dictionary and remove matching words in the corpus with the `removeWords` function within the `tm_map` function.
+
+<br>
+
+### Next steps for a prediction model
+The several n-grams built so far will be useful for predicting the next word in a sequence of words. The prediction will be based on conditional probabilities, specifically I will build a next words prediction model that obeys Markov property (more information [here](https://medium.com/ymedialabs-innovation/next-word-prediction-using-markov-model-570fc0475f96)).
+
+During the creating of the prediction model, the following questions will be considered:
+
+* How can you efficiently store an n-gram model (think Markov Chains)?
+* How can you use the knowledge about word frequencies to make your model smaller and more efficient?
+* How many parameters do you need (i.e. how big is n in your n-gram model)?
+* Can you think of simple ways to "smooth" the probabilities (think about giving all n-grams a non-zero probability even if they aren't observed in the data) ?
+* How do you evaluate whether your model is any good?
+How can you use backoff models to estimate the probability of unobserved n-grams?
